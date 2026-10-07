@@ -1,0 +1,27 @@
+services:
+  jaeger:
+    build:
+      context: .
+    container_name: jaeger
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "16685:16685" # jaeger_query internal gRPC
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP HTTP receiver
+      - "8888:8888" # internal telemetry (scraped by Prometheus)
+      - "8889:8889" # spanmetrics exporter (scraped by Prometheus)
+    environment:
+      - PROMETHEUS_QUERY_URL=${PROMETHEUS_QUERY_URL}
+      - SPANMETRICS_FLUSH_INTERVAL=${SPANMETRICS_FLUSH_INTERVAL:-60s}
+
+  prometheus:
+    build:
+      context: .
+      dockerfile: prometheus.Dockerfile
+    container_name: prometheus
+    environment:
+      - PROMETHEUS_RECEIVER=${PROMETHEUS_RECEIVER}
+    ports:
+      - "9090:9090"
+    depends_on:
+      - jaeger

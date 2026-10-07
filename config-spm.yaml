@@ -1,0 +1,79 @@
+# Jaeger v2 config enabling Service Performance Monitoring (SPM).
+# See: https://www.jaegertracing.io/docs/2.20/architecture/spm/
+#
+# Traces come in over OTLP, get exported to in-memory trace storage AND
+# through the spanmetrics connector, which turns them into RED metrics
+# (calls_total / duration_*) and serves them on :8889 for scraping.
+#
+# Jaeger Query reads those metrics back for the Monitor tab from
+# PROMETHEUS_QUERY_URL (an Aiven Thanos query endpoint) rather than the
+# local scrape target, since that's where metrics_flush_interval-delayed,
+# durably-stored aggregates live.
+service:
+  extensions: [jaeger_storage, jaeger_query]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter, span_metrics]
+    metrics/spanmetrics:
+      receivers: [span_metrics]
+      exporters: [prometheus]
+  telemetry:
+    resource:
+      service.name: jaeger
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+    logs:
+      level: INFO
+
+extensions:
+  jaeger_query:
+    storage:
+      traces: memstore
+      metrics: aiven_thanos
+  jaeger_storage:
+    backends:
+      memstore:
+        memory:
+          max_traces: 100000
+    metric_backends:
+      aiven_thanos:
+        prometheus:
+          endpoint: ${env:PROMETHEUS_QUERY_URL}
+          # Matches the span_metrics connector's default metric namespace
+          # ("traces.span.metrics", dots become underscores in the
+          # Prometheus exporter) so queries hit traces_span_metrics_calls_total
+          # / traces_span_metrics_duration_milliseconds instead of bare names.
+          metric_namespace: traces_span_metrics
+          normalize_calls: true
+          normalize_duration: true
+
+connectors:
+  span_metrics:
+    metrics_flush_interval: ${env:SPANMETRICS_FLUSH_INTERVAL:-60s}
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      http:
+        endpoint: "0.0.0.0:4318"
+
+processors:
+  batch:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: memstore
+  # Scrape target for the local Prometheus, which remote_writes on to
+  # the Aiven Thanos receiver (see prometheus.yml).
+  prometheus:
+    endpoint: "0.0.0.0:8889"
